@@ -7,7 +7,7 @@ stable production security boundary.
 
 Use GitHub Private Vulnerability Reporting for this repository:
 
-https://github.com/SovereignSafetyLabs/vmga/security/advisories/new
+https://github.com/AlderlineSystems/vmga/security/advisories/new
 
 Do not include live Gmail tokens, approval secrets, OAuth client JSON, or
 private mailbox contents in reports. If evidence requires sensitive material,
