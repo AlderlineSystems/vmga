@@ -1,5 +1,5 @@
 # Vesta Mail Governance Adapter (VMGA) v0.2
-Sovereign Safety Labs  
+Alderline Systems
 Classification: UNCLASSIFIED // TLP:WHITE  
 Status: Reference Specification (TRL 4–5)  
 Revised: 2026-04-14
