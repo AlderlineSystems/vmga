@@ -30,7 +30,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import load_ssh_public_key
 
-from .canary import CanaryMarker, find_canary_matches
+from .canary import CanaryMarker, find_canary_matches, validate_canary_registry
 from .evidence_integrity import (
     EvidenceCheckpoint,
     EvidenceHMACConfig,
@@ -910,9 +910,7 @@ class VMGAGmailAdapter:
             raise ValueError("approval_auth must be 'hmac' or 'signature'")
         self.approval_auth = approval_auth
         self.approval_public_keys = approval_public_keys or {}
-        if not all(isinstance(canary, CanaryMarker) for canary in canary_registry):
-            raise ValueError("canary_registry entries must be CanaryMarker instances")
-        self.canary_registry = tuple(canary_registry)
+        self.canary_registry = validate_canary_registry(canary_registry)
 
         # Load all state atomically (with optional fail-closed semantics)
         state = self.state_store.load_all_state(
@@ -1687,10 +1685,12 @@ class VMGAGmailAdapter:
         return {"status": "RESET", "was_locked": was_locked, "admin_id": admin_id}
 
     @staticmethod
-    def _redact_evidence_text(value: Optional[str], *, limit: int = 1000) -> Optional[str]:
+    def _redact_evidence_text(
+        value: Optional[str], *, limit: int = 1000, extra_values: Sequence[str] = ()
+    ) -> Optional[str]:
         if value is None:
             return None
-        return redact_text(str(value))[:limit]
+        return redact_text(str(value), extra_values=extra_values)[:limit]
 
     def _detect_canary_markers(
         self,
@@ -1700,30 +1700,41 @@ class VMGAGmailAdapter:
         parameters: Any,
     ) -> None:
         correlation_id = self._parameters_correlation_id(parameters)
-        for match in find_canary_matches(
+        matches = find_canary_matches(
             self.canary_registry,
             content=content,
             justification=justification,
             parameters=parameters,
-        ):
+        )
+        if not matches:
+            return
+
+        markers = tuple(canary.marker for canary in self.canary_registry)
+        events = []
+        for match in matches:
             event = {
                 "event_type": "vmga_canary_tripped",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "severity": "CRITICAL",
-                "canary_id": self._redact_evidence_text(match.canary_id, limit=256),
+                "canary_id": self._redact_evidence_text(match.canary_id, limit=256, extra_values=markers),
                 "where_observed": match.where_observed,
-                "correlation_id": self._redact_evidence_text(correlation_id, limit=256),
+                "correlation_id": self._redact_evidence_text(correlation_id, limit=256, extra_values=markers),
                 "vmga_profile": self.profile,
             }
-            self._write_to_ledger(event)
-            self.canary_trip_recorded = True
+            events.append(event)
+
+        self.canary_trip_recorded = True
+        try:
+            for event in events:
+                if not self._write_to_ledger(event):
+                    raise RuntimeError("canary trip event persistence failed")
             save_trip = getattr(self.state_store, "save_canary_trip_recorded", None)
-            if save_trip is not None:
-                try:
-                    save_trip()
-                except Exception:
-                    # The in-memory bit and retained ledger event still force FAIL.
-                    pass
+            if save_trip is None:
+                raise RuntimeError("canary trip state persistence is unavailable")
+            if save_trip() is False:
+                raise RuntimeError("canary trip state persistence failed")
+        except Exception as exc:
+            raise RuntimeError("VMGA canary trip could not be durably recorded") from exc
 
     def _log_proposal_received(
         self, proposal: Optional[VMGAProposal], status: str, decision: Optional[PolicyDecision],

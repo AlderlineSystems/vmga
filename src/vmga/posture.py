@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from .evidence_integrity import EvidenceHMACConfig, load_segmented_events, verify_integrity
+from .evidence_integrity import (
+    EvidenceHMACConfig,
+    load_segmented_events,
+    retained_segment_paths,
+    verify_integrity,
+)
 
 
 PASS = "pass"
@@ -99,27 +104,29 @@ def _evidence_chain_result(config: PostureConfig) -> Dict[str, str]:
     return {"state": result.state, "reason": result.reason}
 
 
-def _state_has_canary_trip(config: PostureConfig) -> bool:
-    """Read the durable one-way bit from operator state when available."""
+def _state_canary_evidence(config: PostureConfig) -> tuple[bool, bool]:
+    """Return (tripped, unreadable) for the durable canary state."""
     if not Path(config.state_db_path).expanduser().exists():
-        return False
+        return False, False
     try:
         from .sqlite_state import SQLiteStateStore
 
-        return SQLiteStateStore(config.state_db_path).load_canary_trip_recorded()
+        return SQLiteStateStore(config.state_db_path).load_canary_trip_recorded(), False
     except Exception:
-        return False
+        return False, True
 
 
-def _ledger_has_canary_trip(config: PostureConfig) -> bool:
-    """Find retained trip evidence; unreadable/quiet evidence never implies PASS."""
+def _ledger_canary_evidence(config: PostureConfig) -> tuple[bool, bool]:
+    """Return (tripped, unreadable) for retained canary evidence."""
+    if not retained_segment_paths(config.ledger_path):
+        return False, False
     try:
         return any(
             event.get("event_type") == "vmga_canary_tripped"
             for event in load_segmented_events(config.ledger_path)
-        )
+        ), False
     except Exception:
-        return False
+        return False, True
 
 
 def assess_posture(config: PostureConfig) -> Dict[str, Any]:
@@ -238,11 +245,19 @@ def assess_posture(config: PostureConfig) -> Dict[str, Any]:
     else:
         checks.append(_check("evidence_rotation", WARN, "Evidence ledger rotation is not configured."))
 
-    if config.canary_trip_recorded or _state_has_canary_trip(config) or _ledger_has_canary_trip(config):
+    state_trip, state_unreadable = _state_canary_evidence(config)
+    ledger_trip, ledger_unreadable = _ledger_canary_evidence(config)
+    if config.canary_trip_recorded or state_trip or ledger_trip:
         checks.append(_check(
             "direct_gmail_bypass",
             FAIL,
             "A VMGA canary trip was recorded; treat the deployment as a direct Gmail/Workspace bypass risk.",
+        ))
+    elif state_unreadable or ledger_unreadable:
+        checks.append(_check(
+            "direct_gmail_bypass",
+            FAIL,
+            "VMGA canary trip evidence is unreadable; fail closed rather than accepting direct-bypass attestation.",
         ))
     elif config.direct_bypass_attested and config.direct_bypass_evidence:
         checks.append(_check("direct_gmail_bypass", PASS, "Operator attests direct Gmail/Workspace bypass closure evidence exists.", detail=config.direct_bypass_evidence))

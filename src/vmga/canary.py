@@ -47,8 +47,6 @@ def load_canary_registry(path: str | Path) -> tuple[CanaryMarker, ...]:
         raise ValueError("canary registry 'canaries' must be a list")
 
     canaries: list[CanaryMarker] = []
-    seen_ids: set[str] = set()
-    seen_markers: set[str] = set()
     for index, entry in enumerate(entries):
         if not isinstance(entry, Mapping) or set(entry) != {"canary_id", "marker", "location_hint"}:
             raise ValueError(
@@ -59,16 +57,34 @@ def load_canary_registry(path: str | Path) -> tuple[CanaryMarker, ...]:
             raise ValueError(f"canary registry entry {index} fields must be non-empty strings")
         if any("\x00" in value or "\r" in value or "\n" in value for value in values.values()):
             raise ValueError(f"canary registry entry {index} fields must be single-line strings")
-        canary_id = values["canary_id"]
-        marker = values["marker"]
-        if canary_id in seen_ids:
-            raise ValueError(f"duplicate canary_id: {canary_id}")
-        if marker in seen_markers:
-            raise ValueError(f"duplicate canary marker in entry {index}")
-        seen_ids.add(canary_id)
-        seen_markers.add(marker)
         canaries.append(CanaryMarker(**values))
-    return tuple(canaries)
+    return validate_canary_registry(canaries)
+
+
+def validate_canary_registry(registry: Sequence[CanaryMarker]) -> tuple[CanaryMarker, ...]:
+    canaries = tuple(registry)
+    seen_ids: set[str] = set()
+    seen_markers: set[str] = set()
+    for index, canary in enumerate(canaries):
+        if not isinstance(canary, CanaryMarker):
+            raise ValueError("canary_registry entries must be CanaryMarker instances")
+        values = (canary.canary_id, canary.marker, canary.location_hint)
+        if not all(isinstance(value, str) and value.strip() for value in values):
+            raise ValueError(f"canary registry entry {index} fields must be non-empty strings")
+        if any("\x00" in value or "\r" in value or "\n" in value for value in values):
+            raise ValueError(f"canary registry entry {index} fields must be single-line strings")
+        if canary.canary_id in seen_ids:
+            raise ValueError(f"duplicate canary_id: {canary.canary_id}")
+        if canary.marker in seen_markers:
+            raise ValueError(f"duplicate canary marker in entry {index}")
+        seen_ids.add(canary.canary_id)
+        seen_markers.add(canary.marker)
+
+    markers = tuple(canary.marker for canary in canaries)
+    for canary in canaries:
+        if any(marker in canary.canary_id for marker in markers):
+            raise ValueError(f"canary_id contains a registered canary marker: {canary.canary_id}")
+    return canaries
 
 
 def canary_registry_agent_root(path: str | Path, agent_roots: Iterable[str | Path]) -> str | None:

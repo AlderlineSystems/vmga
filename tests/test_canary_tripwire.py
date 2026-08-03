@@ -122,6 +122,24 @@ def test_same_marker_on_multiple_surfaces_emits_once_per_proposal(tmp_path: Path
     assert trip_events[0]["where_observed"] == "content"
 
 
+def test_marker_in_correlation_id_is_redacted_from_trip_event(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        (CanaryMarker("decoy-1", MARKER, "/operator/decoy"),),
+    )
+
+    adapter.propose_action(
+        "read",
+        "agent-1",
+        content=MARKER,
+        parameters={"correlation_id": MARKER},
+    )
+
+    event = next(event for event in adapter.vesta.audit_ledger.events if event["event_type"] == "vmga_canary_tripped")
+    assert event["correlation_id"] == "[REDACTED]"
+    assert MARKER not in json.dumps(event)
+
+
 def test_unconfigured_and_armed_but_quiet_canaries_remain_unknown(tmp_path: Path) -> None:
     unconfigured = assess_posture(PostureConfig(ledger_path=str(tmp_path / "missing.jsonl")))
     assert _direct_bypass_check(unconfigured)["status"] == "unknown"
@@ -240,3 +258,78 @@ def test_registry_rejects_empty_or_duplicate_markers(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="duplicate canary marker"):
         load_canary_registry(registry_path)
+
+
+def test_registry_rejects_marker_in_canary_id(tmp_path: Path) -> None:
+    registry_path = tmp_path / "bad-id.yaml"
+    registry_path.write_text(
+        "canaries:\n"
+        f"  - {{canary_id: unsafe-{MARKER}, marker: {MARKER}, location_hint: /one}}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="canary_id contains"):
+        load_canary_registry(registry_path)
+
+
+def test_canary_trip_event_write_failure_fails_closed(tmp_path: Path) -> None:
+    class FailingLedger:
+        def append(self, event: dict[str, object]) -> None:
+            raise OSError("ledger unavailable")
+
+    vesta = MemoryVesta()
+    vesta.audit_ledger = FailingLedger()
+    adapter = VMGAGmailAdapter(
+        vesta_adapter=vesta,
+        profile="canary_test",
+        policy_rules={"allowed_actions": ["read"]},
+        state_store=VMGAStateStore(str(tmp_path / "state")),
+        approval_secret="test-secret",
+        canary_registry=(CanaryMarker("decoy-1", MARKER, "/operator/decoy"),),
+    )
+
+    with pytest.raises(RuntimeError, match="durably recorded"):
+        adapter.propose_action("read", "agent-1", content=MARKER)
+    assert adapter.canary_trip_recorded is True
+
+
+def test_canary_trip_state_write_failure_fails_closed(tmp_path: Path) -> None:
+    class FailingStateStore(VMGAStateStore):
+        def save_canary_trip_recorded(self) -> None:
+            raise OSError("state unavailable")
+
+    vesta = MemoryVesta()
+    state_store = FailingStateStore(str(tmp_path / "state"))
+    adapter = VMGAGmailAdapter(
+        vesta_adapter=vesta,
+        profile="canary_test",
+        policy_rules={"allowed_actions": ["read"]},
+        state_store=state_store,
+        approval_secret="test-secret",
+        canary_registry=(CanaryMarker("decoy-1", MARKER, "/operator/decoy"),),
+    )
+
+    with pytest.raises(RuntimeError, match="durably recorded"):
+        adapter.propose_action("read", "agent-1", content=MARKER)
+    assert len(vesta.audit_ledger.events) == 1
+    assert adapter.canary_trip_recorded is True
+
+
+@pytest.mark.parametrize("evidence", ["state", "ledger"])
+def test_unreadable_canary_evidence_fails_closed_over_attestation(tmp_path: Path, evidence: str) -> None:
+    state_db = tmp_path / "state.sqlite3"
+    ledger_path = tmp_path / "evidence.jsonl"
+    if evidence == "state":
+        state_db.write_text("not sqlite", encoding="utf-8")
+    else:
+        ledger_path.write_text("not json\n", encoding="utf-8")
+
+    report = assess_posture(PostureConfig(
+        state_db_path=str(state_db),
+        ledger_path=str(ledger_path),
+        direct_bypass_attested=True,
+        direct_bypass_evidence="operator attestation",
+    ))
+
+    assert _direct_bypass_check(report)["status"] == "fail"
+    assert report["mode"] == "advisory"
