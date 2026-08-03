@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from .canary import canary_registry_agent_root
 from .evidence_integrity import (
     EvidenceHMACConfig,
     load_segmented_events,
@@ -224,7 +225,19 @@ def assess_posture(config: PostureConfig) -> Dict[str, Any]:
         if not agent_roots:
             checks.append(_check(check_id, UNKNOWN, f"{label} isolation cannot be assessed until operator supplies --agent-root.", detail=str(_resolve(path_value))))
             continue
-        root = _path_under_roots(path_value, agent_roots)
+        if check_id == "canary_registry_path":
+            try:
+                root = canary_registry_agent_root(path_value, agent_roots)
+            except (OSError, ValueError) as exc:
+                checks.append(_check(
+                    check_id,
+                    WARN,
+                    f"{label} cannot be trusted for isolation claims.",
+                    detail=str(exc),
+                ))
+                continue
+        else:
+            root = _path_under_roots(path_value, agent_roots)
         if root:
             checks.append(_check(check_id, WARN, f"{label} is under an agent/root workspace; hard-boundary claims require operator-owned paths.", detail=f"path={_resolve(path_value)} root={root}"))
         else:

@@ -316,6 +316,26 @@ def test_broker_rejects_registry_symlink_outside_agent_root(
     assert "must not contain symlinks" in capsys.readouterr().err
 
 
+def test_posture_does_not_pass_symlinked_canary_path(
+    tmp_path: Path,
+) -> None:
+    operator_registry = tmp_path / "operator" / "canaries.yaml"
+    operator_registry.parent.mkdir()
+    operator_registry.write_text("canaries: []\n", encoding="utf-8")
+    agent_root = tmp_path / "agent"
+    agent_root.mkdir()
+    registry_link = agent_root / "canaries.yaml"
+    registry_link.symlink_to(operator_registry)
+
+    report = assess_posture(PostureConfig(
+        canary_registry_path=str(registry_link),
+        agent_roots=[str(agent_root)],
+    ))
+
+    check = next(item for item in report["checks"] if item["id"] == "canary_registry_path")
+    assert check["status"] == "warn"
+
+
 def test_registry_rejects_empty_or_duplicate_markers(tmp_path: Path) -> None:
     registry_path = tmp_path / "bad.yaml"
     registry_path.write_text(
