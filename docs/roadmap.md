@@ -35,10 +35,6 @@ Planned directions include:
 - A local operator console that acts only as a client of the VMGA broker.
 - Documented patterns to help operators achieve credential isolation and
   hardened deployments.
-- Optional decoy (canary) tripwires that make a collapsed deployment boundary
-  observable, surfacing a real direct-bypass attempt as evidence. Detection
-  only: VMGA does not prevent a bypass, and a quiet canary is never treated as
-  proof of isolation.
 
 These are directions, not shipped features, and not capabilities VMGA provides
 on its own today. Credential isolation, in particular, remains a deployment

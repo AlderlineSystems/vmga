@@ -43,6 +43,8 @@ vmga-broker \
   --policy /path/outside/agent/policy.yaml \
   --state-db /path/outside/agent/state.sqlite3 \
   --ledger /path/outside/agent/evidence.jsonl \
+  --canary-registry /path/outside/agent/canaries.yaml \
+  --agent-root /path/to/agent/workspace \
   --ledger-rotate-bytes 10485760 \
   --ledger-backups 5
 ```
@@ -88,6 +90,19 @@ mailbox-capable agent cannot reach direct Gmail, Workspace, browser, CLI, MCP,
 cron, or plugin write paths outside VMGA. Include a durable reference with
 `--direct-bypass-evidence`; do not use a bare attestation as a substitute for
 reviewable deployment evidence.
+
+### Canary tripwire
+
+Operators may configure a dedicated canary registry with
+`--canary-registry /path/outside/agent/canaries.yaml`; see
+[Canary tripwire](canary_tripwire.md) for the registry schema, trip behavior,
+evidence, and limits. Keep the registry operator-owned and non-writable by the
+agent, separate from policy and proposal inputs. Supply every relevant
+`--agent-root`: broker startup refuses a registry under a configured agent root,
+and posture reports registry placement, but this path comparison is not a
+filesystem-permission proof. Follow the canary document's staging check before
+arming a deployment; it also describes the optional operator-hosted decoy
+beacon pattern, which VMGA neither hosts nor ingests.
 
 The posture self-check distinguishes declared modes from operative ones.
 `signature` approval mode passes only when an approver keyring with at least

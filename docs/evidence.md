@@ -71,6 +71,17 @@ Current pressure signal types:
 These events do not create a separate policy engine. They make the existing
 policy decision and integrity checks inspectable as multi-turn evidence.
 
+## Canary Trip Evidence
+
+Collect canary trip evidence according to the authoritative [Canary tripwire]
+document. Retain the payload-free CRITICAL event and resulting posture output
+when a deployment uses this control; do not copy the marker, location hint, or
+surrounding proposal payload into shareable evidence. A canary trip is a
+proposal-surface detection signal, not proof that VMGA prevented or observed a
+silent direct Gmail path.
+
+[Canary tripwire]: canary_tripwire.md
+
 ## Release Review
 
 Use `scripts/vmga_release_check.py` as a preflight gate before tagging a

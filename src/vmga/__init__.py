@@ -16,6 +16,7 @@ from .vmga_adapter import (
     load_vmga_policy,
 )
 from .backends import FakeGmailBackend, GogCLIBackend
+from .canary import CanaryMarker, load_canary_registry
 from .broker import VMGABroker
 from .executor import VMGAExecutor
 from .redaction import redact_json, redact_text
@@ -31,6 +32,7 @@ __all__ = [
     "ContentRisk",
     "ApprovalRecord",
     "FakeGmailBackend",
+    "CanaryMarker",
     "GogCLIBackend",
     "SQLiteStateStore",
     "VMGABroker",
@@ -38,6 +40,7 @@ __all__ = [
     "redact_json",
     "redact_text",
     "load_vmga_policy",
+    "load_canary_registry",
 ]
 
 __version__ = "0.2.0"

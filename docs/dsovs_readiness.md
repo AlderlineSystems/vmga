@@ -88,5 +88,6 @@ paperwork was completed through:
 - #10: Release checklist verification automation and manual-gate separation.
 
 Current remaining DSOVS gaps are expected to be deployment-specific unless a
-new issue is opened against the reference repo. Known future repo-level work is
-tracked separately, including #54 for optional canary tripwire detection.
+new issue is opened against the reference repo. Issue #54's proposal-surface
+canary detection is implemented; its detect-not-prevent boundary and required
+operator evidence are documented in `docs/canary_tripwire.md`.

@@ -15,6 +15,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from .backends import FakeGmailBackend, GogCLIBackend
+from .canary import canary_registry_agent_root, load_canary_registry
 from .broker import VMGABroker, make_server
 from .evidence import verify_events
 from .evidence_integrity import (
@@ -275,6 +276,7 @@ def operator_main(argv: list[str] | None = None) -> int:
     posture.add_argument("--agent-root", action="append", default=None, help="Agent-readable workspace root; required for path-isolation PASS checks")
     posture.add_argument("--attest-no-direct-bypass", action="store_true", help="Operator attests direct Gmail/Workspace bypass closure evidence exists")
     posture.add_argument("--direct-bypass-evidence", default="", help="Reference to direct-bypass closure evidence")
+    posture.add_argument("--canary-registry", default="", help="Operator-owned canary registry path")
 
     show = sub.add_parser("show", help="Show one proposal or approval")
     show.add_argument("proposal_id")
@@ -308,6 +310,7 @@ def operator_main(argv: list[str] | None = None) -> int:
                 agent_roots=args.agent_root or [],
                 direct_bypass_attested=args.attest_no_direct_bypass,
                 direct_bypass_evidence=args.direct_bypass_evidence,
+                canary_registry_path=args.canary_registry,
             ))
         else:
             payload = _get_broker_json(args.broker_url, "/v1/posture", bearer_token)
@@ -389,6 +392,7 @@ def broker_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--agent-root", action="append", default=None, help="Agent-readable workspace root for posture checks; required for path-isolation PASS checks")
     parser.add_argument("--attest-no-direct-bypass", action="store_true", help="Operator attests direct Gmail/Workspace bypass closure evidence exists")
     parser.add_argument("--direct-bypass-evidence", default="", help="Reference to direct-bypass closure evidence")
+    parser.add_argument("--canary-registry", default="", help="Operator-owned YAML/JSON canary registry path")
     args = parser.parse_args(argv)
 
     approval_secret = os.getenv(args.approval_secret_env)
@@ -402,6 +406,21 @@ def broker_main(argv: list[str] | None = None) -> int:
             return 2
         approval_public_keys = json.loads(Path(args.approval_public_keys).read_text(encoding="utf-8"))
 
+    canary_registry = ()
+    if args.canary_registry:
+        try:
+            containing_root = canary_registry_agent_root(args.canary_registry, args.agent_root or [])
+            if containing_root:
+                print(
+                    f"Refusing canary registry under configured agent root: {containing_root}",
+                    file=sys.stderr,
+                )
+                return 2
+            canary_registry = load_canary_registry(args.canary_registry)
+        except (OSError, ValueError) as exc:
+            print(f"invalid canary registry: {exc}", file=sys.stderr)
+            return 2
+
     policy = load_vmga_policy(args.policy)
     ledger = JSONLVMGALedger(Path(args.ledger), rotate_bytes=args.ledger_rotate_bytes, backup_count=args.ledger_backups)
     adapter = VMGAGmailAdapter(
@@ -414,6 +433,7 @@ def broker_main(argv: list[str] | None = None) -> int:
         fail_closed_on_corrupted_state=True,
         approval_auth=args.approval_auth,
         approval_public_keys=approval_public_keys,
+        canary_registry=canary_registry,
     )
     backend = _build_backend(args)
     executor = VMGAExecutor(adapter, backend)
@@ -449,6 +469,7 @@ def broker_main(argv: list[str] | None = None) -> int:
         agent_roots=args.agent_root or [],
         direct_bypass_attested=args.attest_no_direct_bypass,
         direct_bypass_evidence=args.direct_bypass_evidence,
+        canary_registry_path=args.canary_registry,
         approval_auth=args.approval_auth,
         signature_readiness=adapter.signature_readiness,
     )

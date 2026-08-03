@@ -4,7 +4,13 @@ All notable changes to VMGA will be documented here.
 
 ## Unreleased
 
-- No unreleased changes.
+### Security
+
+- Added operator-owned proposal-surface canary detection. Registered non-secret
+  markers in content, justification, or parameters emit payload-free CRITICAL
+  evidence and durably force `direct_gmail_bypass` to fail/advisory through a
+  one-way state bit. This detects but does not prevent bypass; quiet canaries
+  remain unknown and never contribute to hard-enforcement readiness.
 
 ## [0.3.0] - 2026-06-11
 

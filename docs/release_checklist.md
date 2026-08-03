@@ -65,6 +65,9 @@ operator notes in release evidence when a deployment claim depends on them.
   before live use.
 - Verify broker correlation IDs appear on proposal, state, approval, execution,
   and pressure-signal evidence for at least one request lifecycle.
+- If canaries are armed, verify the registry and one-way trip state are outside
+  agent authority, a staging marker emits payload-free CRITICAL evidence, and
+  quiet-canary posture remains unknown rather than pass.
 - Verify redaction happens in memory before writing shareable smoke-test or
   release evidence.
 - Verify live smoke drafts are tagged with `[VMGA-SMOKE]` or cleaned up before

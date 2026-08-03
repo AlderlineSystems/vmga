@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from .evidence_integrity import EvidenceHMACConfig, load_segmented_events, verify_integrity
+from .canary import canary_registry_agent_root
+from .evidence_integrity import (
+    EvidenceHMACConfig,
+    load_segmented_events,
+    retained_segment_paths,
+    verify_integrity,
+)
 
 
 PASS = "pass"
@@ -33,6 +39,9 @@ class PostureConfig:
     agent_roots: List[str] = field(default_factory=list)
     direct_bypass_attested: bool = False
     direct_bypass_evidence: str = ""
+    canary_registry_path: str = ""
+    # One-way operative signal: True can only force direct_gmail_bypass FAIL.
+    canary_trip_recorded: bool = False
     # Operative signal from the adapter's signature-mode readiness computation
     # (VMGAGmailAdapter.signature_readiness). Posture consumes it, never
     # recomputes it. None means the signal is unavailable (e.g. --local).
@@ -94,6 +103,31 @@ def _evidence_chain_result(config: PostureConfig) -> Dict[str, str]:
         keyring={hmac_config.key_id: hmac_config.key},
     )
     return {"state": result.state, "reason": result.reason}
+
+
+def _state_canary_evidence(config: PostureConfig) -> tuple[bool, bool]:
+    """Return (tripped, unreadable) for the durable canary state."""
+    if not Path(config.state_db_path).expanduser().exists():
+        return False, False
+    try:
+        from .sqlite_state import SQLiteStateStore
+
+        return SQLiteStateStore(config.state_db_path).load_canary_trip_recorded(), False
+    except Exception:
+        return False, True
+
+
+def _ledger_canary_evidence(config: PostureConfig) -> tuple[bool, bool]:
+    """Return (tripped, unreadable) for retained canary evidence."""
+    if not retained_segment_paths(config.ledger_path):
+        return False, False
+    try:
+        return any(
+            event.get("event_type") == "vmga_canary_tripped"
+            for event in load_segmented_events(config.ledger_path)
+        ), False
+    except Exception:
+        return False, True
 
 
 def assess_posture(config: PostureConfig) -> Dict[str, Any]:
@@ -180,15 +214,30 @@ def assess_posture(config: PostureConfig) -> Dict[str, Any]:
     else:
         checks.append(_check("evidence_integrity", UNKNOWN, f"Unknown evidence integrity mode: {config.evidence_integrity}"))
 
-    for check_id, path_value, label in (
+    isolation_paths = [
         ("policy_path", config.policy_path, "Policy path"),
         ("state_path", config.state_db_path, "State DB path"),
         ("ledger_path", config.ledger_path, "Evidence ledger path"),
-    ):
+    ]
+    if config.canary_registry_path:
+        isolation_paths.append(("canary_registry_path", config.canary_registry_path, "Canary registry path"))
+    for check_id, path_value, label in isolation_paths:
         if not agent_roots:
             checks.append(_check(check_id, UNKNOWN, f"{label} isolation cannot be assessed until operator supplies --agent-root.", detail=str(_resolve(path_value))))
             continue
-        root = _path_under_roots(path_value, agent_roots)
+        if check_id == "canary_registry_path":
+            try:
+                root = canary_registry_agent_root(path_value, agent_roots)
+            except (OSError, ValueError) as exc:
+                checks.append(_check(
+                    check_id,
+                    WARN,
+                    f"{label} cannot be trusted for isolation claims.",
+                    detail=str(exc),
+                ))
+                continue
+        else:
+            root = _path_under_roots(path_value, agent_roots)
         if root:
             checks.append(_check(check_id, WARN, f"{label} is under an agent/root workspace; hard-boundary claims require operator-owned paths.", detail=f"path={_resolve(path_value)} root={root}"))
         else:
@@ -209,10 +258,24 @@ def assess_posture(config: PostureConfig) -> Dict[str, Any]:
     else:
         checks.append(_check("evidence_rotation", WARN, "Evidence ledger rotation is not configured."))
 
-    if config.direct_bypass_attested and config.direct_bypass_evidence:
+    state_trip, state_unreadable = _state_canary_evidence(config)
+    ledger_trip, ledger_unreadable = _ledger_canary_evidence(config)
+    if config.canary_trip_recorded or state_trip or ledger_trip:
+        checks.append(_check(
+            "direct_gmail_bypass",
+            FAIL,
+            "A VMGA canary trip was recorded; treat the deployment as a direct Gmail/Workspace bypass risk.",
+        ))
+    elif state_unreadable or ledger_unreadable:
+        checks.append(_check(
+            "direct_gmail_bypass",
+            FAIL,
+            "VMGA canary trip evidence is unreadable; fail closed rather than accepting direct-bypass attestation.",
+        ))
+    elif config.direct_bypass_attested and config.direct_bypass_evidence:
         checks.append(_check("direct_gmail_bypass", PASS, "Operator attests direct Gmail/Workspace bypass closure evidence exists.", detail=config.direct_bypass_evidence))
     else:
-        checks.append(_check("direct_gmail_bypass", UNKNOWN, "VMGA cannot locally prove agents lack direct Gmail/Workspace access; supply explicit bypass-closure attestation and evidence before hard-enforcement claims."))
+        checks.append(_check("direct_gmail_bypass", UNKNOWN, "VMGA cannot locally prove agents lack direct Gmail/Workspace access; supply explicit bypass-closure attestation and evidence before hard-enforcement claims. A quiet or unconfigured canary is not proof of isolation."))
     checks.append(_check("single_process_boundary", PASS, "Built-in broker is a single-process control plane; do not run multiple broker processes against one state DB for hard claims."))
 
     hard_blockers = [item for item in checks if item["status"] in {FAIL, WARN, UNKNOWN}]

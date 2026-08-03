@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hmac
 import uuid
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from collections.abc import Mapping
@@ -57,9 +58,10 @@ class VMGABroker:
         }
 
     def posture(self) -> Dict[str, Any]:
-        if self.posture_config is None:
-            return assess_posture(PostureConfig())
-        return assess_posture(self.posture_config)
+        config = self.posture_config or PostureConfig()
+        if self.adapter.canary_trip_recorded and not config.canary_trip_recorded:
+            config = replace(config, canary_trip_recorded=True)
+        return assess_posture(config)
 
     def propose(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         correlation_id = str(payload.get("correlation_id") or uuid.uuid4()) if isinstance(payload, Mapping) else str(uuid.uuid4())

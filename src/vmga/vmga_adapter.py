@@ -24,12 +24,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import load_ssh_public_key
 
+from .canary import CanaryMarker, find_canary_matches, validate_canary_registry
 from .evidence_integrity import (
     EvidenceCheckpoint,
     EvidenceHMACConfig,
@@ -602,7 +603,8 @@ class VMGAStateStore:
             # Set existing files to 0o600
             rate_limit_path = self.storage_path / "rate_limit_state.json"
             nonce_path = self.storage_path / "approval_nonces.json"
-            for path in [self.pending_path, self.approvals_path, rate_limit_path, nonce_path, self.evidence_head_path]:
+            canary_path = self.storage_path / "canary_trip_state.json"
+            for path in [self.pending_path, self.approvals_path, rate_limit_path, nonce_path, self.evidence_head_path, canary_path]:
                 if path.exists():
                     os.chmod(path, 0o600)
         except OSError:
@@ -653,6 +655,17 @@ class VMGAStateStore:
             return active
         except (json.JSONDecodeError, KeyError, OSError):
             return {}
+
+    def save_canary_trip_recorded(self) -> None:
+        """Persist the one-way trip bit; there is intentionally no reset API."""
+        self._atomic_write_json(
+            self.storage_path / "canary_trip_state.json",
+            {"canary_trip_recorded": True},
+        )
+
+    def load_canary_trip_recorded(self) -> bool:
+        # File existence is the one-way bit. Its contents can never reset it.
+        return (self.storage_path / "canary_trip_state.json").exists()
 
     def save_approval_nonce_state(self, used_nonces: Dict[str, str]) -> None:
         nonce_path = self.storage_path / "approval_nonces.json"
@@ -803,7 +816,12 @@ class VMGAStateStore:
         """
         # Check total state file sizes
         total_size = 0
-        for path in [self.pending_path, self.approvals_path, self.storage_path / "lockdown_state.json"]:
+        for path in [
+            self.pending_path,
+            self.approvals_path,
+            self.storage_path / "lockdown_state.json",
+            self.storage_path / "canary_trip_state.json",
+        ]:
             if path.exists():
                 total_size += path.stat().st_size
 
@@ -817,6 +835,7 @@ class VMGAStateStore:
                     "approvals": {},
                     "lockdown_active": True,
                     "denial_counts": {},
+                    "canary_trip_recorded": self.load_canary_trip_recorded(),
                     "corrupted": True,
                 }
 
@@ -848,6 +867,7 @@ class VMGAStateStore:
                 "approvals": {},
                 "lockdown_active": True,  # Fail closed
                 "denial_counts": {},
+                "canary_trip_recorded": self.load_canary_trip_recorded(),
                 "corrupted": True,
             }
 
@@ -857,6 +877,7 @@ class VMGAStateStore:
             "approvals": approvals,
             "lockdown_active": lockdown_active,  # Use loaded value (True if was locked)
             "denial_counts": denial_counts,
+            "canary_trip_recorded": self.load_canary_trip_recorded(),
             "corrupted": any_corrupted,
         }
 
@@ -875,6 +896,7 @@ class VMGAGmailAdapter:
         fail_closed_on_corrupted_state: bool = False,  # Set True for production
         approval_auth: str = "hmac",
         approval_public_keys: Optional[Dict[str, List[Dict[str, str]]]] = None,
+        canary_registry: Sequence[CanaryMarker] = (),
     ):
         self.vesta = vesta_adapter
         self.profile = profile
@@ -888,6 +910,7 @@ class VMGAGmailAdapter:
             raise ValueError("approval_auth must be 'hmac' or 'signature'")
         self.approval_auth = approval_auth
         self.approval_public_keys = approval_public_keys or {}
+        self.canary_registry = validate_canary_registry(canary_registry)
 
         # Load all state atomically (with optional fail-closed semantics)
         state = self.state_store.load_all_state(
@@ -898,6 +921,7 @@ class VMGAGmailAdapter:
         self.approvals: Dict[str, ApprovalRecord] = state["approvals"]
         self.lockdown_active: bool = state["lockdown_active"]
         self.denial_counts: Dict[str, int] = state["denial_counts"]
+        self.canary_trip_recorded = bool(state.get("canary_trip_recorded", False))
 
         # If state was corrupted and we failed closed, log it
         if state.get("corrupted") and fail_closed_on_corrupted_state:
@@ -1211,6 +1235,11 @@ class VMGAGmailAdapter:
         recipients: Optional[List[str]] = None, attachment_ids: Optional[List[str]] = None,
         parameters: Optional[Dict[str, Any]] = None, justification: str = "", sender: str = "",
     ) -> Dict[str, Any]:
+        self._detect_canary_markers(
+            content=content,
+            justification=justification,
+            parameters=parameters,
+        )
         gmail_action = GmailAction.from_string(action)
         if gmail_action is None:
             result = {
@@ -1656,10 +1685,56 @@ class VMGAGmailAdapter:
         return {"status": "RESET", "was_locked": was_locked, "admin_id": admin_id}
 
     @staticmethod
-    def _redact_evidence_text(value: Optional[str], *, limit: int = 1000) -> Optional[str]:
+    def _redact_evidence_text(
+        value: Optional[str], *, limit: int = 1000, extra_values: Sequence[str] = ()
+    ) -> Optional[str]:
         if value is None:
             return None
-        return redact_text(str(value))[:limit]
+        return redact_text(str(value), extra_values=extra_values)[:limit]
+
+    def _detect_canary_markers(
+        self,
+        *,
+        content: Optional[str],
+        justification: str,
+        parameters: Any,
+    ) -> None:
+        correlation_id = self._parameters_correlation_id(parameters)
+        matches = find_canary_matches(
+            self.canary_registry,
+            content=content,
+            justification=justification,
+            parameters=parameters,
+        )
+        if not matches:
+            return
+
+        markers = tuple(canary.marker for canary in self.canary_registry)
+        events = []
+        for match in matches:
+            event = {
+                "event_type": "vmga_canary_tripped",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "severity": "CRITICAL",
+                "canary_id": self._redact_evidence_text(match.canary_id, limit=256, extra_values=markers),
+                "where_observed": match.where_observed,
+                "correlation_id": self._redact_evidence_text(correlation_id, limit=256, extra_values=markers),
+                "vmga_profile": self.profile,
+            }
+            events.append(event)
+
+        self.canary_trip_recorded = True
+        try:
+            for event in events:
+                if not self._write_to_ledger(event):
+                    raise RuntimeError("canary trip event persistence failed")
+            save_trip = getattr(self.state_store, "save_canary_trip_recorded", None)
+            if save_trip is None:
+                raise RuntimeError("canary trip state persistence is unavailable")
+            if save_trip() is False:
+                raise RuntimeError("canary trip state persistence failed")
+        except Exception as exc:
+            raise RuntimeError("VMGA canary trip could not be durably recorded") from exc
 
     def _log_proposal_received(
         self, proposal: Optional[VMGAProposal], status: str, decision: Optional[PolicyDecision],
