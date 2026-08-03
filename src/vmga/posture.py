@@ -33,6 +33,9 @@ class PostureConfig:
     agent_roots: List[str] = field(default_factory=list)
     direct_bypass_attested: bool = False
     direct_bypass_evidence: str = ""
+    canary_registry_path: str = ""
+    # One-way operative signal: True can only force direct_gmail_bypass FAIL.
+    canary_trip_recorded: bool = False
     # Operative signal from the adapter's signature-mode readiness computation
     # (VMGAGmailAdapter.signature_readiness). Posture consumes it, never
     # recomputes it. None means the signal is unavailable (e.g. --local).
@@ -94,6 +97,29 @@ def _evidence_chain_result(config: PostureConfig) -> Dict[str, str]:
         keyring={hmac_config.key_id: hmac_config.key},
     )
     return {"state": result.state, "reason": result.reason}
+
+
+def _state_has_canary_trip(config: PostureConfig) -> bool:
+    """Read the durable one-way bit from operator state when available."""
+    if not Path(config.state_db_path).expanduser().exists():
+        return False
+    try:
+        from .sqlite_state import SQLiteStateStore
+
+        return SQLiteStateStore(config.state_db_path).load_canary_trip_recorded()
+    except Exception:
+        return False
+
+
+def _ledger_has_canary_trip(config: PostureConfig) -> bool:
+    """Find retained trip evidence; unreadable/quiet evidence never implies PASS."""
+    try:
+        return any(
+            event.get("event_type") == "vmga_canary_tripped"
+            for event in load_segmented_events(config.ledger_path)
+        )
+    except Exception:
+        return False
 
 
 def assess_posture(config: PostureConfig) -> Dict[str, Any]:
@@ -180,11 +206,14 @@ def assess_posture(config: PostureConfig) -> Dict[str, Any]:
     else:
         checks.append(_check("evidence_integrity", UNKNOWN, f"Unknown evidence integrity mode: {config.evidence_integrity}"))
 
-    for check_id, path_value, label in (
+    isolation_paths = [
         ("policy_path", config.policy_path, "Policy path"),
         ("state_path", config.state_db_path, "State DB path"),
         ("ledger_path", config.ledger_path, "Evidence ledger path"),
-    ):
+    ]
+    if config.canary_registry_path:
+        isolation_paths.append(("canary_registry_path", config.canary_registry_path, "Canary registry path"))
+    for check_id, path_value, label in isolation_paths:
         if not agent_roots:
             checks.append(_check(check_id, UNKNOWN, f"{label} isolation cannot be assessed until operator supplies --agent-root.", detail=str(_resolve(path_value))))
             continue
@@ -209,10 +238,16 @@ def assess_posture(config: PostureConfig) -> Dict[str, Any]:
     else:
         checks.append(_check("evidence_rotation", WARN, "Evidence ledger rotation is not configured."))
 
-    if config.direct_bypass_attested and config.direct_bypass_evidence:
+    if config.canary_trip_recorded or _state_has_canary_trip(config) or _ledger_has_canary_trip(config):
+        checks.append(_check(
+            "direct_gmail_bypass",
+            FAIL,
+            "A VMGA canary trip was recorded; treat the deployment as a direct Gmail/Workspace bypass risk.",
+        ))
+    elif config.direct_bypass_attested and config.direct_bypass_evidence:
         checks.append(_check("direct_gmail_bypass", PASS, "Operator attests direct Gmail/Workspace bypass closure evidence exists.", detail=config.direct_bypass_evidence))
     else:
-        checks.append(_check("direct_gmail_bypass", UNKNOWN, "VMGA cannot locally prove agents lack direct Gmail/Workspace access; supply explicit bypass-closure attestation and evidence before hard-enforcement claims."))
+        checks.append(_check("direct_gmail_bypass", UNKNOWN, "VMGA cannot locally prove agents lack direct Gmail/Workspace access; supply explicit bypass-closure attestation and evidence before hard-enforcement claims. A quiet or unconfigured canary is not proof of isolation."))
     checks.append(_check("single_process_boundary", PASS, "Built-in broker is a single-process control plane; do not run multiple broker processes against one state DB for hard claims."))
 
     hard_blockers = [item for item in checks if item["status"] in {FAIL, WARN, UNKNOWN}]

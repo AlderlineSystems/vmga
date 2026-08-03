@@ -33,6 +33,13 @@ formal sandbox proof: it reports what VMGA can observe from configuration and
 operator-supplied attestations, and it deliberately fails toward unknown rather
 than optimistic hard-ready claims.
 
+VMGA also supports operator-owned non-secret canary markers on proposal
+`content`, `justification`, and `parameters`. A recorded marker emits CRITICAL
+redacted evidence and forces `direct_gmail_bypass` to `fail`/`advisory` through
+a one-way state bit. This detects only markers that surface through VMGA; it
+does not prevent bypass, observe filesystem reads, or make a quiet canary proof
+of isolation. See [Canary tripwire](docs/canary_tripwire.md).
+
 VMGA now has opt-in Ed25519 approval-signature mode
 ([approval signing design](docs/approval_signing_design.md)). The broker holds
 public keys only, and hard approval-enforcement claims require the approver
@@ -72,6 +79,7 @@ allowlists, sandboxing, and direct-bypass evidence.
 - Multi-turn pressure evidence through `vmga_pressure_signal` events for
   repeated denials, urgency or authority-language pressure, and proposal
   mutation attempts.
+- Proposal-surface canary detection with one-way direct-bypass failure posture.
 
 ## Repository Layout
 
@@ -88,6 +96,7 @@ tests/             Unit tests
 - [Deployment runbook](docs/deployment_runbook.md)
 - [Action catalog](docs/action_catalog.md)
 - [Evidence notes](docs/evidence.md)
+- [Canary tripwire](docs/canary_tripwire.md)
 - [Evidence integrity architecture](docs/evidence_integrity_design.md)
 - [Approval signing architecture](docs/approval_signing_design.md)
 - [Roadmap](docs/roadmap.md)
@@ -169,6 +178,14 @@ allowlist. Gmail send remains denied by VMGA policy and by the backend.
 SQLite state uses WAL mode and a busy timeout for concurrent broker callers.
 Every broker proposal receives a correlation ID that is carried into evidence
 events for request tracing.
+
+Operators can arm canary detection with
+`--canary-registry /path/outside/agent/canaries.yaml`. Keep that dedicated
+registry and VMGA state outside agent-readable/writable roots, and supply
+`--agent-root` so the broker can refuse a known registry placement under an
+agent root. The repository ships no active marker. See
+[Canary tripwire](docs/canary_tripwire.md) for the strict detect-not-prevent
+boundary and registry schema.
 
 Operator helpers:
 

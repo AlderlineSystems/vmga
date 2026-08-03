@@ -68,6 +68,10 @@ class SQLiteStateStore:
                   id INTEGER PRIMARY KEY CHECK (id = 1),
                   payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS canary_trip_state (
+                  id INTEGER PRIMARY KEY CHECK (id = 1),
+                  tripped INTEGER NOT NULL CHECK (tripped = 1)
+                );
                 """
             )
 
@@ -157,6 +161,18 @@ class SQLiteStateStore:
                 conn.executemany("DELETE FROM rate_limit_state WHERE attempt_key = ?", [(key,) for key in stale_keys])
         return active
 
+    def save_canary_trip_recorded(self) -> None:
+        """Persist the one-way trip bit; there is intentionally no reset API."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO canary_trip_state (id, tripped) VALUES (1, 1)"
+            )
+
+    def load_canary_trip_recorded(self) -> bool:
+        with self._connect() as conn:
+            row = conn.execute("SELECT tripped FROM canary_trip_state WHERE id = 1").fetchone()
+        return row is not None
+
     def save_approval_nonce_state(self, used_nonces: Dict[str, str]) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM approval_nonces")
@@ -237,6 +253,7 @@ class SQLiteStateStore:
                 "approvals": self.load_approvals(),
                 "lockdown_active": lockdown_active,
                 "denial_counts": denial_counts,
+                "canary_trip_recorded": self.load_canary_trip_recorded(),
                 "corrupted": corrupted,
             }
         except Exception:
@@ -246,6 +263,7 @@ class SQLiteStateStore:
                     "approvals": {},
                     "lockdown_active": True,
                     "denial_counts": {},
+                    "canary_trip_recorded": False,
                     "corrupted": True,
                 }
             return {
@@ -253,5 +271,6 @@ class SQLiteStateStore:
                 "approvals": {},
                 "lockdown_active": False,
                 "denial_counts": {},
+                "canary_trip_recorded": False,
                 "corrupted": True,
             }

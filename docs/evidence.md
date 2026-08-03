@@ -71,6 +71,20 @@ Current pressure signal types:
 These events do not create a separate policy engine. They make the existing
 policy decision and integrity checks inspectable as multi-turn evidence.
 
+## Canary Trip Evidence
+
+A registered marker observed in proposal `content`, `justification`, or
+`parameters` emits `vmga_canary_tripped` with severity `CRITICAL`, the operator
+`canary_id`, `where_observed`, and the proposal `correlation_id`. The event does
+not include the marker, its location hint, or surrounding payload, and its
+identifiers pass through the existing evidence redaction helper.
+
+A recorded event also sets a durable one-way bit in operator state. Posture
+thereafter reports `direct_gmail_bypass=fail` and `advisory`; no canary signal
+can produce `pass`. This evidence detects only markers that return through VMGA
+and does not prove that VMGA prevented a bypass or observed a silent direct
+Gmail path. See [Canary tripwire](canary_tripwire.md).
+
 ## Release Review
 
 Use `scripts/vmga_release_check.py` as a preflight gate before tagging a
