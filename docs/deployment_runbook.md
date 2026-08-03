@@ -95,27 +95,14 @@ reviewable deployment evidence.
 
 Operators may configure a dedicated canary registry with
 `--canary-registry /path/outside/agent/canaries.yaml`; see
-[Canary tripwire](canary_tripwire.md) for its schema. Keep the registry
-operator-owned and non-writable by the agent, separate from policy and proposal
-inputs. Supply every relevant `--agent-root`: broker startup refuses a registry
-under a configured agent root, and posture reports registry placement, but this
-path comparison is not a filesystem-permission proof.
-
-VMGA scans only proposal `content`, `justification`, and `parameters`. A match
-emits one payload-free `vmga_canary_tripped` CRITICAL event per matched canary
-and durably records a one-way trip bit with no reset API in operator state. The
-resulting `direct_gmail_bypass=fail` takes precedence over an attestation and
-yields `advisory`. No configured marker, or an armed registry with no match,
-leaves the check `unknown` unless
-the existing explicit operator attestation plus evidence independently makes it
-`pass`; canary state itself never makes a check pass or contributes to
-hard-enforcement readiness.
-
-This detects, but does not prevent, a marker returning through VMGA. VMGA does
-not monitor file reads, syscalls, direct Gmail traffic, or silent credential use.
-A quiet canary is not proof of isolation. An optional operator-hosted decoy auth
-endpoint can alert on use of its fake credential, including a silent attempt;
-VMGA neither hosts that endpoint nor currently ingests its beacon.
+[Canary tripwire](canary_tripwire.md) for the registry schema, trip behavior,
+evidence, and limits. Keep the registry operator-owned and non-writable by the
+agent, separate from policy and proposal inputs. Supply every relevant
+`--agent-root`: broker startup refuses a registry under a configured agent root,
+and posture reports registry placement, but this path comparison is not a
+filesystem-permission proof. Follow the canary document's staging check before
+arming a deployment; it also describes the optional operator-hosted decoy
+beacon pattern, which VMGA neither hosts nor ingests.
 
 The posture self-check distinguishes declared modes from operative ones.
 `signature` approval mode passes only when an approver keyring with at least

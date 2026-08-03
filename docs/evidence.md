@@ -73,17 +73,14 @@ policy decision and integrity checks inspectable as multi-turn evidence.
 
 ## Canary Trip Evidence
 
-A registered marker observed in proposal `content`, `justification`, or
-`parameters` emits `vmga_canary_tripped` with severity `CRITICAL`, the operator
-`canary_id`, `where_observed`, and the proposal `correlation_id`. The event does
-not include the marker, its location hint, or surrounding payload, and its
-identifiers pass through the existing evidence redaction helper.
+Collect canary trip evidence according to the authoritative [Canary tripwire]
+document. Retain the payload-free CRITICAL event and resulting posture output
+when a deployment uses this control; do not copy the marker, location hint, or
+surrounding proposal payload into shareable evidence. A canary trip is a
+proposal-surface detection signal, not proof that VMGA prevented or observed a
+silent direct Gmail path.
 
-A recorded event also sets a durable one-way bit in operator state. Posture
-thereafter reports `direct_gmail_bypass=fail` and `advisory`; no canary signal
-can produce `pass`. This evidence detects only markers that return through VMGA
-and does not prove that VMGA prevented a bypass or observed a silent direct
-Gmail path. See [Canary tripwire](canary_tripwire.md).
+[Canary tripwire]: canary_tripwire.md
 
 ## Release Review
 

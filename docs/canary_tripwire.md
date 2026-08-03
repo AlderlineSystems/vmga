@@ -64,22 +64,22 @@ outside agent authority.
 
 ## Evidence
 
-Each matched registered canary emits at most one event per proposal:
+Each matched registered canary emits exactly one event per proposal:
 
 ```json
 {
   "event_type": "vmga_canary_tripped",
   "severity": "CRITICAL",
   "canary_id": "<stable-operator-id>",
-  "where_observed": "content|justification|parameters",
+  "where_observed": "content",
   "correlation_id": "<proposal-correlation-id>"
 }
 ```
 
-The event omits the marker, `location_hint`, and surrounding proposal payload.
-Identifiers use the existing evidence redaction helper. Normal proposal evidence
-continues to follow the redaction and retention rules in [Evidence
-Notes](evidence.md).
+`where_observed` is one of `content`, `justification`, or `parameters`. The event
+omits the marker, `location_hint`, and surrounding proposal payload. Identifiers
+use the existing evidence redaction helper. Normal proposal evidence continues
+to follow the redaction and retention rules in [Evidence Notes](evidence.md).
 
 The durable trip bit has no reset API. Retained trip evidence is also recognized
 by posture after restart. Preserve the operator state database and evidence
