@@ -248,6 +248,29 @@ def test_broker_refuses_registry_under_configured_agent_root(
     assert "Refusing canary registry under configured agent root" in capsys.readouterr().err
 
 
+def test_broker_refuses_registry_under_symlink_alias_agent_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    agent_root = tmp_path / "agent"
+    agent_root.mkdir()
+    agent_root_alias = tmp_path / "agent-alias"
+    agent_root_alias.symlink_to(agent_root, target_is_directory=True)
+    registry_path = agent_root / "canaries.yaml"
+    registry_path.write_text("canaries: []\n", encoding="utf-8")
+    monkeypatch.setenv("VMGA_APPROVAL_SECRET", "test-secret")
+
+    result = broker_main([
+        "--canary-registry", str(registry_path),
+        "--agent-root", str(agent_root_alias),
+        "--allow-unauthenticated",
+    ])
+
+    assert result == 2
+    assert "Refusing canary registry under configured agent root" in capsys.readouterr().err
+
+
 def test_broker_refuses_registry_symlinked_from_agent_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

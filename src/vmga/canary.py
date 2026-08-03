@@ -91,13 +91,18 @@ def validate_canary_registry(registry: Sequence[CanaryMarker]) -> tuple[CanaryMa
 def canary_registry_agent_root(path: str | Path, agent_roots: Iterable[str | Path]) -> str | None:
     """Return the configured agent root containing the registry, if any."""
     lexical_path = _absolute_lexical_path(path)
+    resolved_path = lexical_path.resolve()
     for root in agent_roots:
         lexical_root = _absolute_lexical_path(root)
+        resolved_root = lexical_root.resolve()
         try:
             lexical_path.relative_to(lexical_root)
         except ValueError:
-            continue
-        return str(Path(root).expanduser().resolve())
+            try:
+                resolved_path.relative_to(resolved_root)
+            except ValueError:
+                continue
+        return str(resolved_root)
     _reject_symlinked_registry_path(lexical_path)
     return None
 
