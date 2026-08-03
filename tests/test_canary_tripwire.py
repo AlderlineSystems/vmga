@@ -248,6 +248,51 @@ def test_broker_refuses_registry_under_configured_agent_root(
     assert "Refusing canary registry under configured agent root" in capsys.readouterr().err
 
 
+def test_broker_refuses_registry_symlinked_from_agent_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    operator_registry = tmp_path / "operator" / "canaries.yaml"
+    operator_registry.parent.mkdir()
+    operator_registry.write_text("canaries: []\n", encoding="utf-8")
+    registry_link = tmp_path / "agent" / "canaries.yaml"
+    registry_link.parent.mkdir()
+    registry_link.symlink_to(operator_registry)
+    monkeypatch.setenv("VMGA_APPROVAL_SECRET", "test-secret")
+
+    result = broker_main([
+        "--canary-registry", str(registry_link),
+        "--agent-root", str(tmp_path / "agent"),
+        "--allow-unauthenticated",
+    ])
+
+    assert result == 2
+    assert "Refusing canary registry under configured agent root" in capsys.readouterr().err
+
+
+def test_broker_rejects_registry_symlink_outside_agent_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    operator_registry = tmp_path / "operator" / "canaries.yaml"
+    operator_registry.parent.mkdir()
+    operator_registry.write_text("canaries: []\n", encoding="utf-8")
+    registry_link = tmp_path / "link" / "canaries.yaml"
+    registry_link.parent.mkdir()
+    registry_link.symlink_to(operator_registry)
+    monkeypatch.setenv("VMGA_APPROVAL_SECRET", "test-secret")
+
+    result = broker_main([
+        "--canary-registry", str(registry_link),
+        "--allow-unauthenticated",
+    ])
+
+    assert result == 2
+    assert "must not contain symlinks" in capsys.readouterr().err
+
+
 def test_registry_rejects_empty_or_duplicate_markers(tmp_path: Path) -> None:
     registry_path = tmp_path / "bad.yaml"
     registry_path.write_text(

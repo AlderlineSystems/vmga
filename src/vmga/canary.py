@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -33,7 +34,7 @@ def load_canary_registry(path: str | Path) -> tuple[CanaryMarker, ...]:
     policy surfaces. Deployment is responsible for keeping ``path`` outside
     the agent authority domain.
     """
-    registry_path = Path(path).expanduser()
+    registry_path = _reject_symlinked_registry_path(path)
     try:
         with registry_path.open("r", encoding="utf-8") as handle:
             document = yaml.safe_load(handle)
@@ -89,15 +90,38 @@ def validate_canary_registry(registry: Sequence[CanaryMarker]) -> tuple[CanaryMa
 
 def canary_registry_agent_root(path: str | Path, agent_roots: Iterable[str | Path]) -> str | None:
     """Return the configured agent root containing the registry, if any."""
-    resolved_path = Path(path).expanduser().resolve()
+    lexical_path = _absolute_lexical_path(path)
     for root in agent_roots:
-        resolved_root = Path(root).expanduser().resolve()
+        lexical_root = _absolute_lexical_path(root)
         try:
-            resolved_path.relative_to(resolved_root)
+            lexical_path.relative_to(lexical_root)
         except ValueError:
             continue
-        return str(resolved_root)
+        return str(Path(root).expanduser().resolve())
+    _reject_symlinked_registry_path(lexical_path)
     return None
+
+
+def _absolute_lexical_path(path: str | Path) -> Path:
+    return Path(os.path.abspath(os.fspath(Path(path).expanduser())))
+
+
+def _contains_symlink(path: Path) -> bool:
+    current = Path(path.anchor)
+    for part in path.parts:
+        if part == path.anchor:
+            continue
+        current /= part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _reject_symlinked_registry_path(path: str | Path) -> Path:
+    lexical_path = _absolute_lexical_path(path)
+    if _contains_symlink(lexical_path):
+        raise ValueError("canary registry path must not contain symlinks")
+    return lexical_path
 
 
 def _strings_in(value: Any) -> Iterable[str]:

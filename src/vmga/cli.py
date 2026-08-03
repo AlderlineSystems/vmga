@@ -408,14 +408,14 @@ def broker_main(argv: list[str] | None = None) -> int:
 
     canary_registry = ()
     if args.canary_registry:
-        containing_root = canary_registry_agent_root(args.canary_registry, args.agent_root or [])
-        if containing_root:
-            print(
-                f"Refusing canary registry under configured agent root: {containing_root}",
-                file=sys.stderr,
-            )
-            return 2
         try:
+            containing_root = canary_registry_agent_root(args.canary_registry, args.agent_root or [])
+            if containing_root:
+                print(
+                    f"Refusing canary registry under configured agent root: {containing_root}",
+                    file=sys.stderr,
+                )
+                return 2
             canary_registry = load_canary_registry(args.canary_registry)
         except (OSError, ValueError) as exc:
             print(f"invalid canary registry: {exc}", file=sys.stderr)
